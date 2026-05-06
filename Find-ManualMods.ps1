@@ -1,55 +1,55 @@
 ﻿# =====================================================================
-#  Find-ManualMods.ps1  (версия 2.0)
+#  Find-ManualMods.ps1  (version 2.0)
 # ---------------------------------------------------------------------
-#  Скрипт анализирует все папки модов в Mod Organizer 2 и
-#  классифицирует их по полю installationFile в файле meta.ini,
-#  а также собирает дополнительные данные:
-#    - наличие плагинов (.esp / .esm / .esl) и их количество
-#    - наличие архивов BSA / BA2 и их суммарный размер
-#    - Nexus ID мода, версию, имя Nexus-страницы (из имени архива)
-#    - готовую ссылку на страницу Nexus
+#  This script analyzes all mod folders in Mod Organizer 2 and
+#  classifies them by the installationFile field in meta.ini,
+#  and also collects additional data:
+#    - presence of plugins (.esp / .esm / .esl) and their count
+#    - presence of BSA / BA2 archives and their total size
+#    - Nexus mod ID, version, Nexus page name (parsed from archive name)
+#    - ready-to-click link to the Nexus page
 #
-#  Генерирует три отчёта:
-#    1. ManualMods-Report.txt  - читаемый текстовый отчёт
-#    2. ManualMods-Report.csv  - таблица для Excel / фильтрации
-#    3. ManualMods-Report.html - HTML с кликабельными ссылками
+#  Generates three reports:
+#    1. ManualMods-Report.txt  - readable plain text report
+#    2. ManualMods-Report.csv  - spreadsheet for Excel / filtering
+#    3. ManualMods-Report.html - HTML with clickable links
 #
-#  Запуск:
-#    1. Открой PowerShell в папке со скриптом.
-#    2. Если нужно: Unblock-File .\Find-ManualMods.ps1
-#    3. Запусти: .\Find-ManualMods.ps1
+#  How to run:
+#    1. Open PowerShell in the script's folder.
+#    2. If needed: Unblock-File .\Find-ManualMods.ps1
+#    3. Run: .\Find-ManualMods.ps1
 # =====================================================================
 
 
-# ====================== ИЗМЕНИ ЭТУ СТРОКУ ============================
-# Путь к папке "mods" твоего инстанса MO2.
-# Примеры:
+# ====================== EDIT THIS LINE ===============================
+# Path to the "mods" folder of your MO2 instance.
+# Examples:
 #   "D:\MO2\Skyrim Special Edition\mods"
 #   "D:\Skyrimmods\mods"
 # =====================================================================
 $modsPath = "D:\Skyrimmods\mods"
 
 
-# ====================== ИГРА ДЛЯ ССЫЛОК NEXUS ========================
-# Slug игры для построения ссылок вида:
+# ====================== GAME FOR NEXUS LINKS =========================
+# Game slug used to build links of the form:
 #   https://www.nexusmods.com/<gameSlug>/mods/<id>
-# Допустимые значения: skyrimspecialedition, skyrim, fallout4,
-# falloutnewvegas, oblivion, morrowind, fallout3, starfield, и т.д.
+# Allowed values: skyrimspecialedition, skyrim, fallout4,
+# falloutnewvegas, oblivion, morrowind, fallout3, starfield, etc.
 # =====================================================================
 $nexusGameSlug = "skyrimspecialedition"
 
 
-# ====================== ВКЛЮЧЕНИЕ / ОТКЛЮЧЕНИЕ ОТЧЁТОВ ===============
-# Если какой-то формат не нужен - поставь $false
+# ====================== ENABLE / DISABLE REPORTS =====================
+# Set any format to $false if you don't need it.
 # =====================================================================
 $generateTxt  = $true
 $generateCsv  = $true
 $generateHtml = $true
 
 
-# ====================== ПУТИ К ОТЧЁТАМ ===============================
-# По умолчанию все три файла лягут рядом со скриптом.
-# Если надо - переопредели путь вручную в кавычках.
+# ====================== REPORT PATHS =================================
+# By default, all three files will be placed next to the script.
+# To override, set a custom path in quotes.
 # =====================================================================
 $txtReportPath  = Join-Path $PSScriptRoot "ManualMods-Report.txt"
 $csvReportPath  = Join-Path $PSScriptRoot "ManualMods-Report.csv"
@@ -57,42 +57,42 @@ $htmlReportPath = Join-Path $PSScriptRoot "ManualMods-Report.html"
 
 
 # =====================================================================
-#  Дальше менять ничего не нужно
+#  No need to change anything below this line
 # =====================================================================
 
-# Корректный вывод кириллицы в консоль
+# Ensure proper UTF-8 output in console
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-# Загружаем System.Web для HtmlEncode (нужно для HTML-отчёта)
+# Load System.Web for HtmlEncode (needed for HTML report)
 Add-Type -AssemblyName System.Web -ErrorAction SilentlyContinue
 
-# Проверка пути
+# Validate path
 if (-not (Test-Path $modsPath)) {
-    Write-Host "ОШИБКА: Папка не найдена: $modsPath" -ForegroundColor Red
-    Write-Host "Проверь переменную modsPath в начале скрипта." -ForegroundColor Yellow
+    Write-Host "ERROR: Folder not found: $modsPath" -ForegroundColor Red
+    Write-Host "Check the modsPath variable at the top of the script." -ForegroundColor Yellow
     exit 1
 }
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "  Mod Organizer 2 - анализ установленных модов" -ForegroundColor Cyan
+Write-Host "  Mod Organizer 2 - installed mods analysis" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "Папка: $modsPath" -ForegroundColor Gray
+Write-Host "Folder: $modsPath" -ForegroundColor Gray
 Write-Host ""
 
 
 # ---------------------------------------------------------------------
-#  Вспомогательные функции
+#  Helper functions
 # ---------------------------------------------------------------------
 
-# Определить, является ли .esp на самом деле ESPFE (light master flag)
-# По спецификации формата TES4: 10-й байт заголовка = 0x02 -> ESL/ESPFE
+# Detect whether a .esp file is actually flagged as ESPFE (light master)
+# Per TES4 record spec: byte at offset 9 of the header, 0x02 bit = ESL/ESPFE
 function Test-IsEspFe {
     param([string]$EspPath)
     try {
         $bytes = [System.IO.File]::ReadAllBytes($EspPath) | Select-Object -First 16
         if ($bytes.Count -lt 10) { return $false }
-        # Байт по индексу 9 (10-й по счёту) - флаги записи TES4
+        # Byte at index 9 (10th byte) - TES4 record flags
         # 0x02 = ESL flag (light master)
         return ([byte]($bytes[9]) -band 0x02) -ne 0
     }
@@ -101,7 +101,7 @@ function Test-IsEspFe {
     }
 }
 
-# Построить ссылку на Nexus из ID
+# Build a Nexus URL from a mod ID
 function Get-NexusUrl {
     param([string]$ModId, [string]$Game)
     if ([string]::IsNullOrWhiteSpace($ModId) -or $ModId -eq "0" -or $ModId -eq "-1") {
@@ -110,28 +110,28 @@ function Get-NexusUrl {
     return "https://www.nexusmods.com/$Game/mods/$ModId"
 }
 
-# Извлечь имя мода из имени архива (то, что до -<modid>-)
-# Пример: "Paired Animation Improvements-99621-1-0-2-1706671876.7z" -> "Paired Animation Improvements"
+# Extract the mod name from the archive filename (the part before -<modid>-)
+# Example: "Paired Animation Improvements-99621-1-0-2-1706671876.7z" -> "Paired Animation Improvements"
 function Get-ModNameFromArchive {
     param([string]$ArchiveName, [string]$ModId)
     if ([string]::IsNullOrWhiteSpace($ArchiveName)) { return "" }
     $name = [System.IO.Path]::GetFileNameWithoutExtension($ArchiveName)
     if (-not [string]::IsNullOrWhiteSpace($ModId) -and $ModId -ne "0") {
-        # Пробуем отрезать всё начиная с -<modid>-
+        # Try to cut everything from -<modid>- onwards
         $pattern = "-$ModId-"
         $idx = $name.IndexOf($pattern)
         if ($idx -gt 0) {
             return $name.Substring(0, $idx)
         }
     }
-    # Запасной вариант - отрезать всё начиная с первой группы цифр после дефиса
+    # Fallback - cut from the first digit group after a dash
     if ($name -match '^(.+?)-\d+') {
         return $matches[1]
     }
     return $name
 }
 
-# Форматирование размера в человекочитаемый вид
+# Format byte count into human-readable size
 function Format-Size {
     param([long]$Bytes)
     if ($Bytes -lt 1KB)  { return "$Bytes B" }
@@ -142,7 +142,7 @@ function Format-Size {
 
 
 # ---------------------------------------------------------------------
-#  Основной анализ
+#  Main analysis
 # ---------------------------------------------------------------------
 
 $allMods = Get-ChildItem $modsPath -Directory
@@ -153,13 +153,13 @@ $counter = 0
 foreach ($mod in $allMods) {
     $counter++
 
-    # Прогресс-бар
+    # Progress bar
     $percent = [int](($counter / $total) * 100)
-    Write-Progress -Activity "Анализирую моды" `
+    Write-Progress -Activity "Analyzing mods" `
         -Status "$counter / $total - $($mod.Name)" `
         -PercentComplete $percent
 
-    # --- Чтение meta.ini ---
+    # --- Read meta.ini ---
     $metaFile = Join-Path $mod.FullName "meta.ini"
     $instFile = ""
     $modId    = ""
@@ -175,27 +175,27 @@ foreach ($mod in $allMods) {
         if ($content -match '(?m)^\s*gameName\s*=\s*(.*)')                  { $gameName = $matches[1].Trim() }
     }
 
-    # --- Классификация по типу установки ---
+    # --- Classify by installation type ---
     $installType = ""
     $reason      = ""
     if (-not $hasMeta) {
         $installType = "NoMeta"
-        $reason      = "meta.ini отсутствует"
+        $reason      = "meta.ini is missing"
     }
     elseif ([string]::IsNullOrWhiteSpace($instFile)) {
         $installType = "NoMeta"
-        $reason      = "installationFile пустое или отсутствует"
+        $reason      = "installationFile is empty or missing"
     }
     elseif ($instFile -match '[\\/]') {
         $installType = "Manual"
-        $reason      = "installationFile содержит путь к внешнему архиву"
+        $reason      = "installationFile contains a path to an external archive"
     }
     else {
         $installType = "MO2"
-        $reason      = "installationFile - только имя файла (штатная установка)"
+        $reason      = "installationFile is just a filename (installed via MO2)"
     }
 
-    # --- Анализ файлов внутри мода ---
+    # --- Analyze files inside the mod folder ---
     $espFiles  = @()
     $esmFiles  = @()
     $eslFiles  = @()
@@ -220,16 +220,16 @@ foreach ($mod in $allMods) {
         }
     }
     catch {
-        # Игнорируем недоступные файлы
+        # Ignore inaccessible files
     }
 
     $totalPlugins = $espFiles.Count + $esmFiles.Count + $eslFiles.Count
     $hasPlugin    = $totalPlugins -gt 0
 
-    # --- Вспомогательное: имя по Nexus и URL ---
+    # --- Helper: derived Nexus name and URL ---
     $nexusName = ""
     if ($installType -eq "Manual") {
-        # Берём только имя файла из полного пути
+        # Take only the filename from the full path
         $archiveOnly = Split-Path $instFile -Leaf
         $nexusName   = Get-ModNameFromArchive -ArchiveName $archiveOnly -ModId $modId
     }
@@ -239,7 +239,7 @@ foreach ($mod in $allMods) {
 
     $nexusUrl = Get-NexusUrl -ModId $modId -Game $nexusGameSlug
 
-    # --- Сборка объекта ---
+    # --- Build result object ---
     [void]$results.Add([PSCustomObject]@{
         Mod              = $mod.Name
         InstallType      = $installType
@@ -263,19 +263,19 @@ foreach ($mod in $allMods) {
     })
 }
 
-Write-Progress -Activity "Анализирую моды" -Completed
+Write-Progress -Activity "Analyzing mods" -Completed
 
 
 # ---------------------------------------------------------------------
-#  Подсчёт статистики
+#  Statistics
 # ---------------------------------------------------------------------
 
 $mo2Count    = ($results | Where-Object { $_.InstallType -eq "MO2"    }).Count
 $manualCount = ($results | Where-Object { $_.InstallType -eq "Manual" }).Count
 $noMetaCount = ($results | Where-Object { $_.InstallType -eq "NoMeta" }).Count
 
-# Подозрительные: ручные ИЛИ без meta - и без плагинов и без BSA одновременно
-# (чисто пустые папки или явные косяки распаковки)
+# Suspicious: Manual OR NoMeta - AND no plugins AND no BSA at the same time
+# (likely empty folders or broken extraction)
 $suspicious = $results | Where-Object {
     ($_.InstallType -eq "Manual" -or $_.InstallType -eq "NoMeta") -and
     -not $_.HasPlugin -and $_.BsaCount -eq 0
@@ -283,21 +283,21 @@ $suspicious = $results | Where-Object {
 
 
 # ---------------------------------------------------------------------
-#  Цветной вывод в консоль
+#  Colored console output
 # ---------------------------------------------------------------------
 
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "  СТАТИСТИКА" -ForegroundColor Cyan
+Write-Host "  STATISTICS" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host ("  Всего папок модов:                       {0}" -f $total)
-Write-Host ("  Установлены штатно через MO2:            {0}" -f $mo2Count)    -ForegroundColor Green
-Write-Host ("  Установлены вручную (путь к архиву):     {0}" -f $manualCount) -ForegroundColor Yellow
-Write-Host ("  Без meta.ini или без installationFile:   {0}" -f $noMetaCount) -ForegroundColor Yellow
-Write-Host ("  ПОДОЗРИТЕЛЬНЫЕ (без плагинов и BSA):     {0}" -f $suspicious.Count) -ForegroundColor Red
+Write-Host ("  Total mod folders:                       {0}" -f $total)
+Write-Host ("  Installed via MO2 (built-in downloader): {0}" -f $mo2Count)    -ForegroundColor Green
+Write-Host ("  Installed manually (external archive):   {0}" -f $manualCount) -ForegroundColor Yellow
+Write-Host ("  No meta.ini or no installationFile:      {0}" -f $noMetaCount) -ForegroundColor Yellow
+Write-Host ("  SUSPICIOUS (no plugins and no BSA):      {0}" -f $suspicious.Count) -ForegroundColor Red
 Write-Host ""
 
 if ($suspicious.Count -gt 0) {
-    Write-Host "ПОДОЗРИТЕЛЬНЫЕ МОДЫ (вероятно, битая ручная установка):" -ForegroundColor Red
+    Write-Host "SUSPICIOUS MODS (likely broken manual install):" -ForegroundColor Red
     foreach ($s in ($suspicious | Sort-Object Mod)) {
         Write-Host ("  - {0}" -f $s.Mod) -ForegroundColor Red
     }
@@ -306,91 +306,91 @@ if ($suspicious.Count -gt 0) {
 
 
 # ---------------------------------------------------------------------
-#  TXT отчёт
+#  TXT report
 # ---------------------------------------------------------------------
 
 if ($generateTxt) {
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine("================================================================")
-    [void]$sb.AppendLine("  ОТЧЁТ ПО МОДАМ MOD ORGANIZER 2")
-    [void]$sb.AppendLine("  Дата:  $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
-    [void]$sb.AppendLine("  Папка: $modsPath")
+    [void]$sb.AppendLine("  MOD ORGANIZER 2 - INSTALLED MODS REPORT")
+    [void]$sb.AppendLine("  Date:   $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
+    [void]$sb.AppendLine("  Folder: $modsPath")
     [void]$sb.AppendLine("================================================================")
     [void]$sb.AppendLine("")
-    [void]$sb.AppendLine("СТАТИСТИКА:")
-    [void]$sb.AppendLine("  Всего папок модов:                       $total")
-    [void]$sb.AppendLine("  Установлены штатно через MO2:            $mo2Count")
-    [void]$sb.AppendLine("  Установлены вручную (путь к архиву):     $manualCount")
-    [void]$sb.AppendLine("  Без meta.ini или без installationFile:   $noMetaCount")
-    [void]$sb.AppendLine("  ПОДОЗРИТЕЛЬНЫЕ (без плагинов и BSA):     $($suspicious.Count)")
+    [void]$sb.AppendLine("STATISTICS:")
+    [void]$sb.AppendLine("  Total mod folders:                       $total")
+    [void]$sb.AppendLine("  Installed via MO2 (built-in downloader): $mo2Count")
+    [void]$sb.AppendLine("  Installed manually (external archive):   $manualCount")
+    [void]$sb.AppendLine("  No meta.ini or no installationFile:      $noMetaCount")
+    [void]$sb.AppendLine("  SUSPICIOUS (no plugins and no BSA):      $($suspicious.Count)")
     [void]$sb.AppendLine("")
 
-    # --- Подозрительные ---
+    # --- Suspicious ---
     [void]$sb.AppendLine("================================================================")
-    [void]$sb.AppendLine("  ПОДОЗРИТЕЛЬНЫЕ МОДЫ")
-    [void]$sb.AppendLine("  (ручные / без meta И без плагинов И без BSA - возможный косяк)")
+    [void]$sb.AppendLine("  SUSPICIOUS MODS")
+    [void]$sb.AppendLine("  (Manual / NoMeta AND no plugins AND no BSA - likely broken)")
     [void]$sb.AppendLine("================================================================")
     [void]$sb.AppendLine("")
     if ($suspicious.Count -eq 0) {
-        [void]$sb.AppendLine("  (нет таких модов)")
+        [void]$sb.AppendLine("  (none)")
     } else {
         foreach ($item in ($suspicious | Sort-Object Mod)) {
             [void]$sb.AppendLine("  [$($item.Mod)]")
-            [void]$sb.AppendLine("    Тип установки: $($item.InstallType)")
-            [void]$sb.AppendLine("    Причина:       $($item.Reason)")
-            if ($item.NexusUrl) { [void]$sb.AppendLine("    Nexus:         $($item.NexusUrl)") }
-            if ($item.InstallationFile) { [void]$sb.AppendLine("    Архив:         $($item.InstallationFile)") }
+            [void]$sb.AppendLine("    Install type: $($item.InstallType)")
+            [void]$sb.AppendLine("    Reason:       $($item.Reason)")
+            if ($item.NexusUrl) { [void]$sb.AppendLine("    Nexus:        $($item.NexusUrl)") }
+            if ($item.InstallationFile) { [void]$sb.AppendLine("    Archive:      $($item.InstallationFile)") }
             [void]$sb.AppendLine("")
         }
     }
 
-    # --- Список 1: ручные ---
+    # --- List 1: manually installed ---
     [void]$sb.AppendLine("================================================================")
-    [void]$sb.AppendLine("  СПИСОК 1: МОДЫ, УСТАНОВЛЕННЫЕ ИЗ ВНЕШНИХ АРХИВОВ")
+    [void]$sb.AppendLine("  LIST 1: MODS INSTALLED FROM EXTERNAL ARCHIVES")
     [void]$sb.AppendLine("================================================================")
     [void]$sb.AppendLine("")
     $manuals = $results | Where-Object { $_.InstallType -eq "Manual" } | Sort-Object Mod
     if ($manuals.Count -eq 0) {
-        [void]$sb.AppendLine("  (нет таких модов)")
+        [void]$sb.AppendLine("  (none)")
     } else {
         foreach ($item in $manuals) {
             [void]$sb.AppendLine("  [$($item.Mod)]")
-            [void]$sb.AppendLine("    Архив:    $($item.InstallationFile)")
+            [void]$sb.AppendLine("    Archive:  $($item.InstallationFile)")
             if ($item.ModId)    { [void]$sb.AppendLine("    Nexus ID: $($item.ModId)") }
-            if ($item.Version)  { [void]$sb.AppendLine("    Версия:   $($item.Version)") }
+            if ($item.Version)  { [void]$sb.AppendLine("    Version:  $($item.Version)") }
             if ($item.NexusUrl) { [void]$sb.AppendLine("    URL:      $($item.NexusUrl)") }
-            $pluginInfo = "    Плагины:  "
+            $pluginInfo = "    Plugins:  "
             if ($item.HasPlugin) {
                 $parts = @()
                 if ($item.EspCount   -gt 0) { $parts += "$($item.EspCount) ESP" }
                 if ($item.EsmCount   -gt 0) { $parts += "$($item.EsmCount) ESM" }
                 if ($item.EslCount   -gt 0) { $parts += "$($item.EslCount) ESL" }
-                if ($item.EspFeCount -gt 0) { $parts += "(из них $($item.EspFeCount) ESPFE)" }
+                if ($item.EspFeCount -gt 0) { $parts += "($($item.EspFeCount) of which are ESPFE)" }
                 $pluginInfo += ($parts -join ", ")
             } else {
-                $pluginInfo += "НЕТ"
+                $pluginInfo += "NONE"
             }
             [void]$sb.AppendLine($pluginInfo)
             if ($item.BsaCount -gt 0) {
-                [void]$sb.AppendLine("    BSA/BA2:  $($item.BsaCount) шт. ($($item.BsaSizeFormatted))")
+                [void]$sb.AppendLine("    BSA/BA2:  $($item.BsaCount) file(s) ($($item.BsaSizeFormatted))")
             }
             [void]$sb.AppendLine("")
         }
     }
 
-    # --- Список 2: без meta ---
+    # --- List 2: no meta ---
     [void]$sb.AppendLine("================================================================")
-    [void]$sb.AppendLine("  СПИСОК 2: МОДЫ БЕЗ META.INI ИЛИ БЕЗ INSTALLATIONFILE")
+    [void]$sb.AppendLine("  LIST 2: MODS WITHOUT META.INI OR INSTALLATIONFILE")
     [void]$sb.AppendLine("================================================================")
     [void]$sb.AppendLine("")
     $noMetas = $results | Where-Object { $_.InstallType -eq "NoMeta" } | Sort-Object Mod
     if ($noMetas.Count -eq 0) {
-        [void]$sb.AppendLine("  (нет таких модов)")
+        [void]$sb.AppendLine("  (none)")
     } else {
         foreach ($item in $noMetas) {
             [void]$sb.AppendLine("  [$($item.Mod)]")
-            [void]$sb.AppendLine("    Причина:  $($item.Reason)")
-            $pluginInfo = "    Плагины:  "
+            [void]$sb.AppendLine("    Reason:   $($item.Reason)")
+            $pluginInfo = "    Plugins:  "
             if ($item.HasPlugin) {
                 $parts = @()
                 if ($item.EspCount -gt 0) { $parts += "$($item.EspCount) ESP" }
@@ -398,11 +398,11 @@ if ($generateTxt) {
                 if ($item.EslCount -gt 0) { $parts += "$($item.EslCount) ESL" }
                 $pluginInfo += ($parts -join ", ")
             } else {
-                $pluginInfo += "НЕТ"
+                $pluginInfo += "NONE"
             }
             [void]$sb.AppendLine($pluginInfo)
             if ($item.BsaCount -gt 0) {
-                [void]$sb.AppendLine("    BSA/BA2:  $($item.BsaCount) шт. ($($item.BsaSizeFormatted))")
+                [void]$sb.AppendLine("    BSA/BA2:  $($item.BsaCount) file(s) ($($item.BsaSizeFormatted))")
             }
             [void]$sb.AppendLine("")
         }
@@ -410,33 +410,33 @@ if ($generateTxt) {
 
     $utf8Bom = New-Object System.Text.UTF8Encoding $true
     [System.IO.File]::WriteAllText($txtReportPath, $sb.ToString(), $utf8Bom)
-    Write-Host "TXT отчёт:  $txtReportPath" -ForegroundColor Green
+    Write-Host "TXT report:  $txtReportPath" -ForegroundColor Green
 }
 
 
 # ---------------------------------------------------------------------
-#  CSV отчёт
+#  CSV report
 # ---------------------------------------------------------------------
 
 if ($generateCsv) {
-    # Готовим объекты для CSV (без длинных списков, чтобы было удобно фильтровать)
+    # Build objects for CSV (lean schema for easy filtering)
     $csvData = $results | Select-Object Mod, InstallType, ModId, Version, NexusName, NexusUrl,
         HasPlugin, EspCount, EsmCount, EslCount, EspFeCount, BsaCount, BsaSizeFormatted,
         Plugins, Bsas, InstallationFile, Reason | Sort-Object InstallType, Mod
 
     $csvData | Export-Csv -Path $csvReportPath -NoTypeInformation -Encoding UTF8 -Delimiter ';'
-    Write-Host "CSV отчёт:  $csvReportPath" -ForegroundColor Green
+    Write-Host "CSV report:  $csvReportPath" -ForegroundColor Green
 }
 
 
 # ---------------------------------------------------------------------
-#  HTML отчёт
+#  HTML report
 # ---------------------------------------------------------------------
 
 if ($generateHtml) {
     $html = New-Object System.Text.StringBuilder
     [void]$html.AppendLine("<!DOCTYPE html>")
-    [void]$html.AppendLine("<html lang='ru'><head><meta charset='UTF-8'>")
+    [void]$html.AppendLine("<html lang='en'><head><meta charset='UTF-8'>")
     [void]$html.AppendLine("<title>MO2 Mods Report</title>")
     [void]$html.AppendLine("<style>")
     [void]$html.AppendLine("body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #1e1e1e; color: #d4d4d4; padding: 20px; }")
@@ -463,19 +463,19 @@ if ($generateHtml) {
     [void]$html.AppendLine(".danger-row { background: #3a1a1a !important; }")
     [void]$html.AppendLine("</style></head><body>")
 
-    [void]$html.AppendLine("<h1>Mod Organizer 2 - отчёт по модам</h1>")
-    [void]$html.AppendLine("<div class='small'>Сгенерировано: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')<br>Папка: $modsPath</div>")
+    [void]$html.AppendLine("<h1>Mod Organizer 2 - mods report</h1>")
+    [void]$html.AppendLine("<div class='small'>Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')<br>Folder: $modsPath</div>")
 
     [void]$html.AppendLine("<div class='stats'>")
-    [void]$html.AppendLine("<h2 style='margin-top:0; border:none; padding:0;'>Статистика</h2>")
-    [void]$html.AppendLine("<div>Всего модов: <b>$total</b></div>")
-    [void]$html.AppendLine("<div><span class='badge bg-mo2'>MO2</span> штатно через MO2: <b>$mo2Count</b></div>")
-    [void]$html.AppendLine("<div><span class='badge bg-manual'>Manual</span> вручную из внешнего архива: <b>$manualCount</b></div>")
-    [void]$html.AppendLine("<div><span class='badge bg-nometa'>NoMeta</span> без meta.ini / installationFile: <b>$noMetaCount</b></div>")
-    [void]$html.AppendLine("<div><span class='badge bg-danger'>!</span> Подозрительные (без плагинов и BSA): <b>$($suspicious.Count)</b></div>")
+    [void]$html.AppendLine("<h2 style='margin-top:0; border:none; padding:0;'>Statistics</h2>")
+    [void]$html.AppendLine("<div>Total mods: <b>$total</b></div>")
+    [void]$html.AppendLine("<div><span class='badge bg-mo2'>MO2</span> installed via MO2 (built-in downloader): <b>$mo2Count</b></div>")
+    [void]$html.AppendLine("<div><span class='badge bg-manual'>Manual</span> installed manually from external archive: <b>$manualCount</b></div>")
+    [void]$html.AppendLine("<div><span class='badge bg-nometa'>NoMeta</span> no meta.ini / installationFile: <b>$noMetaCount</b></div>")
+    [void]$html.AppendLine("<div><span class='badge bg-danger'>!</span> Suspicious (no plugins and no BSA): <b>$($suspicious.Count)</b></div>")
     [void]$html.AppendLine("</div>")
 
-    # Функция для одной таблицы
+    # Helper for a single table
     function Write-HtmlTable {
         param(
             [System.Text.StringBuilder]$Sb,
@@ -484,21 +484,21 @@ if ($generateHtml) {
             [string]$TableId,
             [bool]$HighlightDanger = $false
         )
-        [void]$Sb.AppendLine("<h2>$Title (всего: $($Items.Count))</h2>")
+        [void]$Sb.AppendLine("<h2>$Title (total: $($Items.Count))</h2>")
         if ($Items.Count -eq 0) {
-            [void]$Sb.AppendLine("<p class='small'>(нет таких модов)</p>")
+            [void]$Sb.AppendLine("<p class='small'>(none)</p>")
             return
         }
-        [void]$Sb.AppendLine("<div class='filter-box'><input type='text' placeholder='Фильтр по имени...' onkeyup=""filterTable('$TableId', this.value)""></div>")
+        [void]$Sb.AppendLine("<div class='filter-box'><input type='text' placeholder='Filter by name...' onkeyup=""filterTable('$TableId', this.value)""></div>")
         [void]$Sb.AppendLine("<table id='$TableId'>")
         [void]$Sb.AppendLine("<thead><tr>")
-        [void]$Sb.AppendLine("<th onclick=""sortTable('$TableId', 0)"">Мод</th>")
-        [void]$Sb.AppendLine("<th onclick=""sortTable('$TableId', 1)"">Тип</th>")
+        [void]$Sb.AppendLine("<th onclick=""sortTable('$TableId', 0)"">Mod</th>")
+        [void]$Sb.AppendLine("<th onclick=""sortTable('$TableId', 1)"">Type</th>")
         [void]$Sb.AppendLine("<th onclick=""sortTable('$TableId', 2)"">Nexus</th>")
-        [void]$Sb.AppendLine("<th onclick=""sortTable('$TableId', 3)"">Версия</th>")
-        [void]$Sb.AppendLine("<th onclick=""sortTable('$TableId', 4)"">Плагины</th>")
+        [void]$Sb.AppendLine("<th onclick=""sortTable('$TableId', 3)"">Version</th>")
+        [void]$Sb.AppendLine("<th onclick=""sortTable('$TableId', 4)"">Plugins</th>")
         [void]$Sb.AppendLine("<th onclick=""sortTable('$TableId', 5)"">BSA/BA2</th>")
-        [void]$Sb.AppendLine("<th>Архив / Причина</th>")
+        [void]$Sb.AppendLine("<th>Archive / Reason</th>")
         [void]$Sb.AppendLine("</tr></thead><tbody>")
 
         foreach ($item in ($Items | Sort-Object Mod)) {
@@ -527,7 +527,7 @@ if ($generateHtml) {
                 if ($item.EspFeCount -gt 0) { $parts += "<span class='small'>($($item.EspFeCount) ESPFE)</span>" }
                 $parts -join ", "
             } else {
-                "<span class='badge bg-danger'>НЕТ</span>"
+                "<span class='badge bg-danger'>NONE</span>"
             }
 
             $bsaCell = if ($item.BsaCount -gt 0) {
@@ -556,19 +556,19 @@ if ($generateHtml) {
         [void]$Sb.AppendLine("</tbody></table>")
     }
 
-    Write-HtmlTable -Sb $html -Title "Подозрительные моды" `
+    Write-HtmlTable -Sb $html -Title "Suspicious mods" `
         -Items $suspicious -TableId "tbl-susp" -HighlightDanger $true
 
-    Write-HtmlTable -Sb $html -Title "Установлены вручную (внешний архив)" `
+    Write-HtmlTable -Sb $html -Title "Installed manually (external archive)" `
         -Items ($results | Where-Object { $_.InstallType -eq "Manual" }) -TableId "tbl-manual" -HighlightDanger $true
 
-    Write-HtmlTable -Sb $html -Title "Без meta.ini или без installationFile" `
+    Write-HtmlTable -Sb $html -Title "No meta.ini or no installationFile" `
         -Items ($results | Where-Object { $_.InstallType -eq "NoMeta" }) -TableId "tbl-nometa" -HighlightDanger $true
 
-    Write-HtmlTable -Sb $html -Title "Все моды (включая штатные)" `
+    Write-HtmlTable -Sb $html -Title "All mods (including MO2-installed)" `
         -Items $results -TableId "tbl-all" -HighlightDanger $false
 
-    # JS для сортировки и фильтра
+    # JS for sorting and filtering
     [void]$html.AppendLine(@"
 <script>
 function sortTable(tableId, col) {
@@ -601,9 +601,9 @@ function filterTable(tableId, query) {
 
     $utf8Bom = New-Object System.Text.UTF8Encoding $true
     [System.IO.File]::WriteAllText($htmlReportPath, $html.ToString(), $utf8Bom)
-    Write-Host "HTML отчёт: $htmlReportPath" -ForegroundColor Green
+    Write-Host "HTML report: $htmlReportPath" -ForegroundColor Green
 }
 
 Write-Host ""
-Write-Host "Готово." -ForegroundColor Cyan
+Write-Host "Done." -ForegroundColor Cyan
 Write-Host ""
